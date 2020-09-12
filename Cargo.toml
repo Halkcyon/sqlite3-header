@@ -1,0 +1,13 @@
+[package]
+name = "sqlite3-header"
+version = "0.1.0"
+authors = ["Maximilian Burszley <mburszley@gmail.com>"]
+edition = "2018"
+license-file = "LICENSE.md"
+readme = "README.md"
+homepage = "https://github.com/mburszley/sqlite3-header/"
+repository = "https://github.com/mburszley/sqlite3-header/"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
