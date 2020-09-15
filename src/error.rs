@@ -17,7 +17,7 @@ impl Display for Error {
             Self::InvalidMagicHeaderString(v) => write!(
                 f,
                 "expected '{}', found {:?}",
-                String::from_utf8_lossy(&MAGIC_HEADER_BYTES),
+                std::str::from_utf8(&MAGIC_HEADER_BYTES).unwrap(),
                 v,
             ),
             Self::InvalidPageSize(msg) => write!(f, ""),
