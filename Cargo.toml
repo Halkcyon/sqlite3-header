@@ -1,7 +1,7 @@
 [package]
 name = "sqlite3-header"
 description = "A crate to parse/deserialize the sqlite3 header."
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Maximilian Burszley <mburszley@gmail.com>"]
 edition = "2018"
 license = "MIT"

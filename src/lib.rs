@@ -2,31 +2,33 @@
 
 pub mod error;
 
-use std::{
-    array::TryFromSliceError,
-    convert::TryInto,
-};
+use std::convert::TryInto;
 
-pub static MAGIC_HEADER_BYTES: [u8; 16] = [
+/// The C string "SQLite format 3\000"
+const MAGIC_HEADER_BYTES: [u8; 16] = [
     0x53, 0x51, 0x4c, 0x69,
     0x74, 0x65, 0x20, 0x66,
     0x6f, 0x72, 0x6d, 0x61,
     0x74, 0x20, 0x33, 0x00,
 ];
 
-fn two_byte_slice_to_u16(slice: &[u8]) -> Result<u16, TryFromSliceError> {
-    let bytes: [u8; 2] = slice.try_into()?;
-    Ok(u16::from_be_bytes(bytes))
+fn two_byte_slice_to_u16(slice: &[u8]) -> u16 {
+    u16::from_be_bytes(slice.try_into().unwrap())
 }
 
-fn four_byte_slice_to_u32(slice: &[u8]) -> Result<u32, TryFromSliceError> {
-    let bytes: [u8; 4] = slice.try_into()?;
-    Ok(u32::from_be_bytes(bytes))
+fn four_byte_slice_to_u32(slice: &[u8]) -> u32 {
+    u32::from_be_bytes(slice.try_into().unwrap())
 }
 
-#[derive(Debug)]
-pub struct PageSize(u16);
-
+/// The file format write version and file format read version at offsets 18 and 19
+/// are intended to allow for enhancements of the file format in future versions of
+/// SQLite. In current versions of SQLite, both of these values are 1 for rollback
+/// journalling modes and 2 for WAL journalling mode. If a version of SQLite coded
+/// to the current file format specification encounters a database file where the
+/// read version is 1 or 2 but the write version is greater than 2, then the
+/// database file must be treated as read-only. If a database file with a read
+/// version greater than 2 is encountered, then that database cannot be read or
+/// written.
 #[derive(Debug)]
 pub enum FileFormat {
     Inaccessible,
@@ -34,6 +36,12 @@ pub enum FileFormat {
     WriteAheadLogging,
 }
 
+/// The maximum and minimum embedded payload fractions and the leaf payload
+/// fraction values must be 64, 32, and 32. These values were originally intended
+/// to be tunable parameters that could be used to modify the storage format of the
+/// b-tree algorithm. However, that functionality is not supported and there are no
+/// current plans to add support in the future. Hence, these three bytes are fixed
+/// at the values specified.
 #[derive(Debug)]
 pub struct Payload {
     pub leaf_fraction: u8,
@@ -41,6 +49,10 @@ pub struct Payload {
     pub minimum_embedded_fraction: u8,
 }
 
+/// Unused pages in the database file are stored on a freelist. The 4-byte
+/// big-endian integer at offset 32 stores the page number of the first page of the
+/// freelist, or zero if the freelist is empty. The 4-byte big-endian integer at
+/// offset 36 stores stores the total number of pages on the freelist.
 #[derive(Debug)]
 pub struct Freelist {
     pub page_index: u32,
@@ -52,12 +64,10 @@ pub struct Freelist {
 /// numbers at offsets 18 and 19 except that the schema format number refers to the
 /// high-level SQL formatting rather than the low-level b-tree formatting. Four
 /// schema format numbers are currently defined:
-
 /// 1. Format 1 is understood by all versions of SQLite back to version 3.0.0 (2004-06-18).
 /// 2. Format 2 adds the ability of rows within the same table to have a varying number of columns, in order to support the ALTER TABLE ... ADD COLUMN functionality. Support for reading and writing format 2 was added in SQLite version 3.1.3 on 2005-02-20.
 /// 3. Format 3 adds the ability of extra columns added by ALTER TABLE ... ADD COLUMN to have non-NULL default values. This capability was added in SQLite version 3.1.4 on 2005-03-11.
 /// 4. Format 4 causes SQLite to respect the DESC keyword on index declarations. (The DESC keyword is ignored in indexes for formats 1, 2, and 3.) Format 4 also adds two new boolean record type values (serial types 8 and 9). Support for format 4 was added in SQLite 3.3.0 on 2006-01-10.
-
 /// New database files created by SQLite use format 4 by default. The
 /// legacy_file_format pragma can be used to cause SQLite to create new database
 /// files using format 1. The format version number can be made to default to 1
@@ -130,8 +140,8 @@ pub struct LastUpdate {
 }
 
 #[derive(Debug)]
-pub struct SQLite3Header<'a> {
-    page_size: PageSize,
+pub struct SQLite3Header {
+    page_size: u16,
 
     file_format_write_version: FileFormat,
     file_format_read_version: FileFormat,
@@ -154,14 +164,19 @@ pub struct SQLite3Header<'a> {
 
     user_version: u32,
 
-    vacuum: Option<&'a Vacuum>,
+    vacuum: Option<Vacuum>,
 
     application_id: u32,
 
     last_update: LastUpdate,
 }
 
-impl<'a> SQLite3Header<'a> {
+impl SQLite3Header {
+    /// All other bytes of the database file header are reserved for future expansion
+    /// and must be set to zero.
+    #[allow(non_upper_case_globals)]
+    pub const reserved: [u8; 20] = [0; 20];
+
     /// Every valid SQLite database file begins with the following 16 bytes (in hex):
     /// 53 51 4c 69 74 65 20 66 6f 72 6d 61 74 20 33 00. This byte sequence corresponds
     /// to the UTF-8 string "SQLite format 3" including the nul terminator character at
@@ -169,10 +184,6 @@ impl<'a> SQLite3Header<'a> {
     pub fn magic_header_string(&self) -> &str {
         std::str::from_utf8(&MAGIC_HEADER_BYTES).unwrap()
     }
-
-    /// All other bytes of the database file header are reserved for future expansion
-    /// and must be set to zero.
-    pub const reserved: [u8; 20] = [0; 20];
 
     /// The two-byte value beginning at offset 16 determines the page size of the
     /// database. For SQLite versions 3.7.0.1 (2010-08-04) and earlier, this value is
@@ -184,19 +195,10 @@ impl<'a> SQLite3Header<'a> {
     /// number to represent the 65536 page size. Or one can view the two-byte field as
     /// a little endian number and say that it represents the page size divided by 256.
     /// These two interpretations of the page-size field are equivalent.
-    pub fn page_size(&self) -> &PageSize {
-        &self.page_size
+    pub fn page_size(&self) -> u16 {
+        self.page_size
     }
 
-    /// The file format write version and file format read version at offsets 18 and 19
-    /// are intended to allow for enhancements of the file format in future versions of
-    /// SQLite. In current versions of SQLite, both of these values are 1 for rollback
-    /// journalling modes and 2 for WAL journalling mode. If a version of SQLite coded
-    /// to the current file format specification encounters a database file where the
-    /// read version is 1 or 2 but the write version is greater than 2, then the
-    /// database file must be treated as read-only. If a database file with a read
-    /// version greater than 2 is encountered, then that database cannot be read or
-    /// written.
     pub fn file_format_read_version(&self) -> &FileFormat {
         &self.file_format_read_version
     }
@@ -222,12 +224,6 @@ impl<'a> SQLite3Header<'a> {
         self.reserved_bytes_per_page
     }
 
-    /// The maximum and minimum embedded payload fractions and the leaf payload
-    /// fraction values must be 64, 32, and 32. These values were originally intended
-    /// to be tunable parameters that could be used to modify the storage format of the
-    /// b-tree algorithm. However, that functionality is not supported and there are no
-    /// current plans to add support in the future. Hence, these three bytes are fixed
-    /// at the values specified.
     pub fn payload_fraction(&self) -> &Payload {
         &self.payload_fraction
     }
@@ -270,10 +266,6 @@ impl<'a> SQLite3Header<'a> {
         self.in_header_database_size
     }
 
-    /// Unused pages in the database file are stored on a freelist. The 4-byte
-    /// big-endian integer at offset 32 stores the page number of the first page of the
-    /// freelist, or zero if the freelist is empty. The 4-byte big-endian integer at
-    /// offset 36 stores stores the total number of pages on the freelist.
     pub fn freelist(&self) -> &Freelist {
         &self.freelist
     }
@@ -301,8 +293,12 @@ impl<'a> SQLite3Header<'a> {
         self.user_version
     }
 
-    pub fn vacuum(&self) -> Option<&'a Vacuum> {
-        self.vacuum
+    pub fn vacuum(&self) -> Option<&Vacuum> {
+        if let Some(vac) = &self.vacuum {
+            Some(vac)
+        } else {
+            None
+        }
     }
 
     /// The 4-byte big-endian integer at offset 68 is an "Application ID" that can be
